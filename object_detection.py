@@ -380,9 +380,18 @@ def main():
     print("="*70)
     
     try:
-        # Step 1: Setup - Download model and sample image
-        print("\nStep 1: Setting up model and sample image...")
-        model_path, image_path = setup_model_and_image()
+        # Step 1: Setup - Download model (use user-provided image or sample)
+        print("\nStep 1: Setting up model...")
+        model_path, _ = setup_model_and_image()
+        
+        # Use user-provided image from Downloads (or sample if not found)
+        user_image_path = r"C:\Users\PREDATOR\Downloads\face-1.jpg"
+        if os.path.exists(user_image_path):
+            image_path = user_image_path
+            print(f"✓ Using user image: {user_image_path}")
+        else:
+            print(f"User image not found, using sample image...")
+            _, image_path = setup_model_and_image()
         
         # Step 2: Initialize the detector
         print("\nStep 2: Initializing object detector...")
