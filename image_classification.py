@@ -13,7 +13,9 @@ Author: MediaPipe Demo
 Date: 2026
 """
 
+import argparse
 import os
+import shutil
 import urllib.request
 import cv2
 import numpy as np
@@ -38,12 +40,12 @@ def download_file(url, filename):
         print(f"Downloading {filename}...")
         try:
             urllib.request.urlretrieve(url, filename)
-            print(f"✓ Downloaded {filename}")
+            print(f"[OK] Downloaded {filename}")
         except Exception as e:
             print(f"Could not download {filename}: {e}")
             return False
     else:
-        print(f"✓ {filename} already exists")
+        print(f"[OK] {filename} already exists")
     return True
 
 
@@ -78,6 +80,56 @@ def setup_model_and_image():
     return model_path, sample_image_path
 
 
+def setup_example_images(default_sample_image_path):
+    """
+    Prepare multiple example images for batch classification.
+
+    Args:
+        default_sample_image_path (str): Fallback sample image path
+
+    Returns:
+        list[tuple[str, str]]: List of (label, image_path)
+    """
+    examples_dir = os.path.join("data", "examples")
+    if not os.path.exists(examples_dir):
+        os.makedirs(examples_dir)
+
+    # Use local image first if user already has one.
+    user_image_path = r"C:\Users\PREDATOR\Downloads\face-1.jpg"
+    example_images = []
+    if os.path.exists(user_image_path):
+        example_images.append(("user_face", user_image_path))
+
+    # Public-domain / stable sample URLs for different scenes.
+    url_examples = [
+        (
+            "lena_portrait",
+            "https://raw.githubusercontent.com/opencv/opencv/master/samples/data/lena.jpg",
+            os.path.join(examples_dir, "lena.jpg"),
+        ),
+        (
+            "fruits_basket",
+            "https://raw.githubusercontent.com/opencv/opencv/master/samples/data/fruits.jpg",
+            os.path.join(examples_dir, "fruits.jpg"),
+        ),
+        (
+            "sudoku_grid",
+            "https://raw.githubusercontent.com/opencv/opencv/master/samples/data/sudoku.png",
+            os.path.join(examples_dir, "sudoku.png"),
+        ),
+    ]
+
+    for label, url, path in url_examples:
+        if download_file(url, path):
+            example_images.append((label, path))
+
+    # Guarantee at least one image exists.
+    if not example_images and os.path.exists(default_sample_image_path):
+        example_images.append(("fallback_sample", default_sample_image_path))
+
+    return example_images
+
+
 def create_test_image(output_path):
     """
     Create a simple test image for classification testing.
@@ -98,7 +150,7 @@ def create_test_image(output_path):
     
     # Save the test image
     cv2.imwrite(output_path, image)
-    print(f"✓ Created test image at {output_path}")
+    print(f"[OK] Created test image at {output_path}")
 
 
 # ============================================================================
@@ -137,7 +189,7 @@ def create_image_classifier(model_path):
     
     # Step 3: Create the ImageClassifier from the options
     classifier = vision.ImageClassifier.create_from_options(options)
-    print("✓ Image Classifier initialized successfully")
+    print("[OK] Image Classifier initialized successfully")
     
     return classifier
 
@@ -170,7 +222,7 @@ def load_image(image_path):
     # Create MediaPipe Image object from numpy array
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
     
-    print(f"✓ Image loaded successfully")
+    print("[OK] Image loaded successfully")
     print(f"  Image shape: {rgb_image.shape}")
     
     return cv_image, mp_image
@@ -199,7 +251,7 @@ def classify_image(classifier, mp_image):
     # This is the main inference call that processes the image
     classification_result = classifier.classify(mp_image)
     
-    print("✓ Image classification completed")
+    print("[OK] Image classification completed")
     
     return classification_result
 
@@ -240,13 +292,35 @@ def print_classification_results(classification_result):
         
         # Create a visual confidence bar
         bar_length = int(confidence * 40)
-        bar = "█" * bar_length + "░" * (40 - bar_length)
+        bar = "#" * bar_length + "-" * (40 - bar_length)
         
         print(f"{idx}. {category_name}")
         print(f"   Confidence: {confidence:.2%} [{bar}]")
         if hasattr(category, 'index'):
             print(f"   Index: {category.index}")
         print()
+
+
+def get_top_prediction(classification_result):
+    """
+    Return the top prediction from a classification result.
+
+    Args:
+        classification_result (vision.ImageClassifierResult): Classification result
+
+    Returns:
+        tuple[str, float] | tuple[None, None]: (label, score)
+    """
+    if not classification_result.classifications:
+        return None, None
+
+    categories = classification_result.classifications[0].categories
+    if not categories:
+        return None, None
+
+    top = categories[0]
+    category_name = top.display_name if top.display_name else top.category_name
+    return category_name, top.score
 
 
 # ============================================================================
@@ -266,7 +340,7 @@ def display_image(cv_image, output_path="data/input_display.jpg", timeout_ms=100
     
     # Save the image
     cv2.imwrite(output_path, cv_image)
-    print(f"✓ Image saved")
+    print("[OK] Image saved")
     
     # Try to display the image in a window
     try:
@@ -281,11 +355,55 @@ def display_image(cv_image, output_path="data/input_display.jpg", timeout_ms=100
         cv2.waitKey(timeout_ms)
         cv2.destroyAllWindows()
         
-        print("✓ Display window closed")
+        print("[OK] Display window closed")
         
     except Exception as e:
-        print(f"✓ Image display skipped ({type(e).__name__})")
+        print(f"[OK] Image display skipped ({type(e).__name__})")
         print(f"  Output saved to: {output_path}")
+
+
+def run_batch_classification(classifier, image_entries, save_dir="data/classification_inputs"):
+    """
+    Run classification across multiple images and print a concise summary.
+
+    Args:
+        classifier (vision.ImageClassifier): Classifier object
+        image_entries (list[tuple[str, str]]): List of (label, image_path)
+        save_dir (str): Directory for saving input copies
+    """
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    print("\n" + "=" * 70)
+    print("BATCH IMAGE CLASSIFICATION")
+    print("=" * 70)
+
+    batch_summary = []
+    for idx, (label, image_path) in enumerate(image_entries, 1):
+        print(f"\n[{idx}/{len(image_entries)}] Example: {label}")
+        cv_image, mp_image = load_image(image_path)
+        result = classify_image(classifier, mp_image)
+        print_classification_results(result)
+
+        top_label, top_score = get_top_prediction(result)
+        batch_summary.append((label, image_path, top_label, top_score))
+
+        # Save a copy of each input that was classified.
+        ext = os.path.splitext(image_path)[1].lower() or ".jpg"
+        output_path = os.path.join(save_dir, f"{idx:02d}_{label}{ext}")
+        try:
+            shutil.copy(image_path, output_path)
+        except Exception:
+            cv2.imwrite(output_path, cv_image)
+
+    print("\n" + "=" * 70)
+    print("BATCH SUMMARY (TOP-1)")
+    print("=" * 70)
+    for label, image_path, top_label, top_score in batch_summary:
+        if top_label is None:
+            print(f"- {label}: no prediction ({image_path})")
+        else:
+            print(f"- {label}: {top_label} ({top_score:.2%})")
 
 
 # ============================================================================
@@ -301,46 +419,68 @@ def main():
     print("="*70)
     
     try:
+        parser = argparse.ArgumentParser(description="MediaPipe image classification demo")
+        parser.add_argument(
+            "--single-image",
+            type=str,
+            default=None,
+            help="Optional path to classify one image only",
+        )
+        parser.add_argument(
+            "--no-display",
+            action="store_true",
+            help="Skip OpenCV display window in single-image mode",
+        )
+        args = parser.parse_args()
+
         # Step 1: Setup - Download model and sample image
         print("\nStep 1: Setting up model and sample image...")
         model_path, image_path = setup_model_and_image()
         
         if model_path is None:
-            print("❌ Error: Could not download model")
+            print("[ERROR] Could not download model")
             return 1
-        
-        # Check if user has a custom image in Downloads
-        user_image_path = r"C:\Users\PREDATOR\Downloads\face-1.jpg"
-        if os.path.exists(user_image_path):
-            image_path = user_image_path
-            print(f"✓ Using user image: {user_image_path}")
         
         # Step 2: Initialize the classifier
         print("\nStep 2: Initializing image classifier...")
         classifier = create_image_classifier(model_path)
-        
-        # Step 3: Load the image
-        print("\nStep 3: Loading image...")
-        cv_image, mp_image = load_image(image_path)
-        
-        # Step 4: Run classification
-        print("\nStep 4: Running classification...")
-        classification_result = classify_image(classifier, mp_image)
-        
-        # Step 5: Print results
-        print("\nStep 5: Processing results...")
-        print_classification_results(classification_result)
-        
-        # Step 6: Display image
-        print("\nStep 6: Displaying image...")
-        display_image(cv_image)
+
+        if args.single_image:
+            image_path = args.single_image
+            print(f"[OK] Single-image mode: {image_path}")
+
+            # Step 3: Load the image
+            print("\nStep 3: Loading image...")
+            cv_image, mp_image = load_image(image_path)
+
+            # Step 4: Run classification
+            print("\nStep 4: Running classification...")
+            classification_result = classify_image(classifier, mp_image)
+
+            # Step 5: Print results
+            print("\nStep 5: Processing results...")
+            print_classification_results(classification_result)
+
+            # Step 6: Display image
+            if not args.no_display:
+                print("\nStep 6: Displaying image...")
+                display_image(cv_image)
+        else:
+            print("\nStep 3: Preparing multiple examples...")
+            image_entries = setup_example_images(image_path)
+            if not image_entries:
+                print("[ERROR] No images available for batch classification")
+                return 1
+
+            print("\nStep 4: Running batch classification...")
+            run_batch_classification(classifier, image_entries)
         
         print("\n" + "="*70)
         print("IMAGE CLASSIFICATION COMPLETED SUCCESSFULLY!")
         print("="*70 + "\n")
         
     except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
+        print(f"\n[ERROR] {str(e)}")
         import traceback
         traceback.print_exc()
         return 1
